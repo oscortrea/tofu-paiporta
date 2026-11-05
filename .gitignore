@@ -1,0 +1,5 @@
+tofu.tfvars
+*.tfvars
+.terraform/
+*.tfstate
+*.tfstate.*

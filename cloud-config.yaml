@@ -1,0 +1,36 @@
+#cloud-config
+packages:
+- apache
+- rsync
+write_files:
+# Script de BACKUP
+- path: /usr/local/bin/backup-web.sh
+permissions: "0755"
+content: |
+#!/bin/bash
+set -euo pipefail
+FECHA=$(date +%F)
+DEST=/var/backups-arboles/web
+mkdir -p "$DEST"
+logger -t backup-web "Inicio backup $FECHA"
+tar czf "$DEST/web-$FECHA.tar.gz" /var/www/html
+find "$DEST" -name 'web-*.tar.gz' -mtime +7 -delete
+logger -t backup-web "Fin backup OK: $(du -h "$DEST/web-$FECHA.tar.gz" | cut -f1)"
+# MONITORIZACION
+- path: /usr/local/bin/monitor-backup.sh
+permissions: "0755"
+content: |
+#!/bin/bash
+exec &> >(logger -t monitor-backup)
+LAST=$(ls -t /var/backups-arboles/web/web-*.tar.gz 2>/dev/null | head -1)
+if [ -z "$LAST" ]; then
+echo "CRITICO: no existe ningun backup"
+exit 1
+fi
+EDAD=$(( ( $(date +%s) - $(stat -c %Y "$LAST") ) / 86400 ))
+[ "$EDAD" -le 1 ] && echo " * OK: backup reciente ($LAST)" || echo " [ AVISO ] : ultimo backup
+runcmd:
+# Cron nocturno
+- (crontab -l 2>/dev/null; echo "30 2 * * * /usr/local/bin/backup-web.sh") | crontab -
+- (crontab -l 2>/dev/null; echo "30 8 * * * /usr/local/bin/monitor-backup.sh") | crontab -
+- /usr/local/bin/backup-web.sh
