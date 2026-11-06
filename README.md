@@ -21,3 +21,5 @@ El proyecto implementa hardening de red mediante el firewall nativo de Proxmox g
 1. Inicializa el directorio de trabajo de OpenTofu:
    ```bash
    tofu init
+   tofu plan
+   tofu apply
