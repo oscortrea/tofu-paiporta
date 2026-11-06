@@ -30,7 +30,15 @@ resource "proxmox_virtual_environment_container" "web" {
   network_interface {
     name   = "eth0"
     bridge = "vmbr0"
+    firewall = true # Habilita el filtrado en la interfaz de red del contenedor
   }
+
+  # Activación del firewall y política restrictiva de entrada DROP por defecto
+  #firewall {
+    #enabled       = true
+    #input_policy  = "DROP"
+    #output_policy = "ACCEPT"
+  #}
 
   operating_system {
     template_file_id = "local:vztmpl/${var.ct_template}"
@@ -48,6 +56,28 @@ resource "proxmox_virtual_environment_container" "web" {
 
   memory {
     dedicated = 1024
+  }
+}
+
+# Reglas de entrada para el contenedor web (HTTP 80 y HTTPS 443)
+resource "proxmox_virtual_environment_firewall_rules" "web_rules" {
+  node_name    = var.pm_node
+  container_id = proxmox_virtual_environment_container.web.vm_id
+
+  rule {
+    type     = "in"
+    action   = "ACCEPT"
+    proto = "tcp"
+    dport    = 80
+    comment  = "Permitir HTTP"
+  }
+
+  rule {
+    type     = "in"
+    action   = "ACCEPT"
+    proto = "tcp"
+    dport    = 443
+    comment  = "Permitir HTTPS"
   }
 }
 
@@ -129,8 +159,10 @@ resource "terraform_data" "web_setup" {
       "a2dissite 000-default.conf",
       "a2enmod rewrite",
 
-      # Certificado SSL automático con Let's Encrypt para tu dominio de clase
-      #"certbot --apache --non-interactive --agree-tos -m oscortrea@alu.edu.gva.es -d oscortrea.yatat.es --redirect",
+      # Certificado SSL autofirmado
+      "openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/apache-selfsigned.key -out /etc/ssl/certs/apache-selfsigned.crt -subj '/CN=oscortrea.yatat.es'",
+      "a2enmod ssl",
+      "a2ensite default-ssl",
 
       "chmod 755 /usr/local/bin/backup-web.sh /usr/local/bin/monitor-backup.sh",
       "chmod 644 /etc/cron.d/web-backup",
@@ -174,7 +206,15 @@ resource "proxmox_virtual_environment_container" "db" {
   network_interface {
     name   = "eth0"
     bridge = "vmbr0"
+    firewall = true # Habilita el filtrado en la interfaz de red de la base de datos
   }
+
+  # Activación del firewall y política restrictiva de entrada DROP por defecto
+  #firewall {
+    #enabled       = true
+    #input_policy  = "DROP"
+    #output_policy = "ACCEPT"
+  #}
 
   operating_system {
     template_file_id = "local:vztmpl/${var.ct_template}"
@@ -192,6 +232,21 @@ resource "proxmox_virtual_environment_container" "db" {
 
   memory {
     dedicated = 1024
+  }
+}
+
+# Regla de entrada para la base de datos (MySQL 3306 exclusivo desde la IP del contenedor web)
+resource "proxmox_virtual_environment_firewall_rules" "db_rules" {
+  node_name    = var.pm_node
+  container_id = proxmox_virtual_environment_container.db.vm_id
+
+  rule {
+    type     = "in"
+    action   = "ACCEPT"
+    proto = "tcp"
+    dport    = 3306
+    source   = "192.168.40.50" # IP de tu contenedor web (ajusta si difiere en tus variables)[cite: 4]
+    comment  = "Permitir MySQL exclusivamente desde paiporta-web"
   }
 }
 
@@ -215,15 +270,13 @@ resource "terraform_data" "db_setup" {
       "systemctl enable --now mysql",
       "sed -i 's/127.0.0.1/0.0.0.0/g' /etc/mysql/mysql.conf.d/mysqld.cnf",
       "systemctl restart mysql",
-      # Clonar el repositorio temporalmente en la BD para leer el create-db.sql directamente de GitHub
       "rm -rf /tmp/repo-db && git clone https://github.com/oscortrea/Ubuntu-paiporta /tmp/repo-db",
       "mysql -e \"CREATE DATABASE IF NOT EXISTS PaiportArbolado CHARACTER SET utf8mb4;\"",
       "mysql -e \"CREATE USER IF NOT EXISTS 'user_bd'@'192.168.40.50' IDENTIFIED BY 'passwdbd';\"",
       "mysql -e \"GRANT ALL PRIVILEGES ON PaiportArbolado.* TO 'user_bd'@'192.168.40.50';\"",
       "mysql -e \"FLUSH PRIVILEGES;\"",
-      # Importar el esquema usando el fichero directamente desde el repositorio clonado
       "mysql PaiportArbolado < /tmp/repo-db/create-db.sql",
-      "rm -rf /tmp/repo-db" # Limpiar el repositorio temporal
+      "rm -rf /tmp/repo-db"
     ]
   }
 }
